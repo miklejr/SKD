@@ -1,6 +1,5 @@
 import { startServerAndCreateNextHandler } from '@as-integrations/next';
 import { ApolloServer } from '@apollo/server';
-import { gql } from 'graphql-tag';
 import { NextRequest } from 'next/server';
 import redis from '@/lib/upstash';
 
@@ -114,7 +113,8 @@ async function getQuoteFromRedis(symbol: string): Promise<QuoteData | null> {
 
 // GraphQL схема - определяет типы данных и доступные запросы
 // Поля price, change, changePercent теперь могут быть null (Float вместо Float!)
-const typeDefs = gql`
+// Apollo Server поддерживает строки напрямую без использования gql
+const typeDefs = `
   type ETF {
     id: ID!
     symbol: String!
