@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+/* Плавные анимации для ссылок */
+a {
+  transition: color 0.2s ease-in-out, text-decoration 0.2s ease-in-out;
+}
+
+a:hover {
+  transition: color 0.15s ease-in-out, text-decoration 0.15s ease-in-out;
+}
+
+/* Плавные анимации для кнопок */
+button {
+  transition: background-color 0.2s ease-in-out, 
+              color 0.2s ease-in-out,
+              border-color 0.2s ease-in-out,
+              transform 0.1s ease-in-out,
+              box-shadow 0.2s ease-in-out;
+}
+
+button:hover {
+  transition: background-color 0.15s ease-in-out, 
+              color 0.15s ease-in-out,
+              border-color 0.15s ease-in-out,
+              transform 0.1s ease-in-out,
+              box-shadow 0.15s ease-in-out;
+}
+
+button:active {
+  transform: scale(0.98);
+  transition: transform 0.1s ease-in-out;
+}
+
+/* Плавные анимации для интерактивных элементов */
+input, 
+select, 
+textarea {
+  transition: border-color 0.2s ease-in-out, 
+              box-shadow 0.2s ease-in-out;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  transition: border-color 0.15s ease-in-out, 
+              box-shadow 0.15s ease-in-out;
+}

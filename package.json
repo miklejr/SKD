@@ -1,0 +1,38 @@
+{
+  "name": "etf-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "worker": "tsx workers/fetcher.ts",
+    "moex-worker": "tsx workers/moex-fetcher.ts",
+    "history-loader": "tsx workers/history-loader.ts"
+  },
+  "dependencies": {
+    "@apollo/server": "^5.5.0",
+    "@as-integrations/next": "^4.1.0",
+    "@upstash/redis": "^1.37.0",
+    "chart.js": "^4.4.0",
+    "dotenv": "^17.4.2",
+    "graphql": "^16.13.2",
+    "lucide-react": "^1.11.0",
+    "next": "16.2.4",
+    "react": "19.2.4",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "19.2.4",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
