@@ -2,6 +2,8 @@ import { startServerAndCreateNextHandler } from '@as-integrations/next';
 import { ApolloServer } from '@apollo/server';
 import { NextRequest } from 'next/server';
 import redis from '@/lib/upstash';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
 // Интерфейс для котировки из Upstash Redis
 interface QuoteData {
@@ -155,6 +157,16 @@ const typeDefs = `
     totalValue: Float!
   }
 
+  type User {
+    id: ID!
+    email: String!
+  }
+
+  type AuthPayload {
+    token: String!
+    user: User!
+  }
+
   type Query {
     etfs: [ETF!]!
     etf(symbol: String!): ETF
@@ -166,6 +178,8 @@ const typeDefs = `
     createPortfolio(name: String!): Portfolio
     addPortfolioItem(portfolioId: ID!, etfId: ID!, quantity: Float!): PortfolioItem
     removePortfolioItem(portfolioId: ID!, itemId: ID!): Boolean  # Используем itemId вместо etfId для удаления конкретной позиции
+    signUp(email: String!, password: String!): AuthPayload
+    signIn(email: String!, password: String!): AuthPayload
   }
 `;
 
@@ -241,12 +255,17 @@ const resolvers = {
       return etfsWithQuotes;
     },
 
-    // Получить все портфели демо-пользователя
-    myPortfolios: async () => {
-      const userId = 'demo-user';
+    // Получить все портфели текущего пользователя
+    myPortfolios: async (_: any, __: any, context: { userId: string | null }) => {
+      // Проверяем авторизацию - если userId нет, выбрасываем ошибку
+      if (!context.userId) {
+        throw new Error('Требуется авторизация');
+      }
+
+      const userId = context.userId;
 
       try {
-        // Получаем все ID портфелей из Set portfolio_list:demo-user
+        // Получаем все ID портфелей из Set portfolio_list:{userId}
         const portfolioIds = await redis.smembers(`portfolio_list:${userId}`);
 
         // Если портфелей нет - возвращаем пустой массив
@@ -350,8 +369,13 @@ const resolvers = {
 
   Mutation: {
     // Создать новый портфель
-    createPortfolio: async (_: any, args: { name: string }) => {
-      const userId = 'demo-user';
+    createPortfolio: async (_: any, args: { name: string }, context: { userId: string | null }) => {
+      // Проверяем авторизацию - если userId нет, выбрасываем ошибку
+      if (!context.userId) {
+        throw new Error('Требуется авторизация');
+      }
+
+      const userId = context.userId;
 
       try {
         // Генерируем уникальный ID портфеля
@@ -365,10 +389,10 @@ const resolvers = {
           items: [],
         };
 
-        // Сохраняем портфель в Redis по ключу portfolio:demo-user:{id}
+        // Сохраняем портфель в Redis по ключу portfolio:{userId}:{id}
         await redis.set(`portfolio:${userId}:${id}`, JSON.stringify(portfolio));
 
-        // Добавляем ID в Set portfolio_list:demo-user
+        // Добавляем ID в Set portfolio_list:{userId}
         await redis.sadd(`portfolio_list:${userId}`, id);
 
         // Возвращаем портфель с нулевыми метриками
@@ -388,8 +412,13 @@ const resolvers = {
     },
 
     // Добавить позицию в портфель
-    addPortfolioItem: async (_: any, args: { portfolioId: string; etfId: string; quantity: number }) => {
-      const userId = 'demo-user';
+    addPortfolioItem: async (_: any, args: { portfolioId: string; etfId: string; quantity: number }, context: { userId: string | null }) => {
+      // Проверяем авторизацию - если userId нет, выбрасываем ошибку
+      if (!context.userId) {
+        throw new Error('Требуется авторизация');
+      }
+
+      const userId = context.userId;
 
       try {
         // Получаем портфель из Redis
@@ -464,8 +493,13 @@ const resolvers = {
     },
 
     // Удалить позицию из портфеля
-    removePortfolioItem: async (_: any, args: { portfolioId: string; itemId: string }) => {
-      const userId = 'demo-user';
+    removePortfolioItem: async (_: any, args: { portfolioId: string; itemId: string }, context: { userId: string | null }) => {
+      // Проверяем авторизацию - если userId нет, выбрасываем ошибку
+      if (!context.userId) {
+        throw new Error('Требуется авторизация');
+      }
+
+      const userId = context.userId;
 
       try {
         // Получаем портфель из Redis
@@ -520,6 +554,111 @@ const resolvers = {
       } catch (error) {
         console.error('Ошибка при удалении позиции из портфеля:', error);
         return false;
+      }
+    },
+
+    // Регистрация нового пользователя
+    signUp: async (_: any, args: { email: string; password: string }) => {
+      try {
+        // Проверяем, есть ли уже пользователь с таким email
+        const existingUserId = await redis.get(`user:email:${args.email}`);
+        
+        // Если пользователь уже существует - выбрасываем ошибку
+        if (existingUserId) {
+          throw new Error('Пользователь с таким email уже существует');
+        }
+
+        // Хешируем пароль с помощью bcrypt (10 раундов - стандартный уровень безопасности)
+        const passwordHash = await bcrypt.hash(args.password, 10);
+
+        // Генерируем уникальный ID пользователя
+        const userId = Math.random().toString(36).substr(2, 9);
+
+        // Сохраняем пользователя в Redis по ключу user:{id}
+        await redis.set(`user:${userId}`, JSON.stringify({
+          id: userId,
+          email: args.email,
+          passwordHash,
+        }));
+
+        // Сохраняем маппинг email -> id для быстрого поиска
+        await redis.set(`user:email:${args.email}`, userId);
+
+        // Получаем секретный ключ для JWT из переменной окружения
+        const jwtSecret = process.env.JWT_SECRET || 'default-secret-change-in-production';
+
+        // Генерируем JWT токен (срок действия 7 дней)
+        const token = jwt.sign(
+          { userId }, // Payload - данные, которые кодируются в токен
+          jwtSecret, // Секретный ключ для подписи
+          { expiresIn: '7d' } // Опции: токен действителен 7 дней
+        );
+
+        // Возвращаем токен и данные пользователя
+        return {
+          token,
+          user: {
+            id: userId,
+            email: args.email,
+          },
+        };
+      } catch (error) {
+        console.error('Ошибка при регистрации:', error);
+        throw error;
+      }
+    },
+
+    // Вход в систему
+    signIn: async (_: any, args: { email: string; password: string }) => {
+      try {
+        // Ищем ID пользователя по email
+        const userId = await redis.get(`user:email:${args.email}`);
+
+        // Если пользователь не найден - выбрасываем ошибку
+        if (!userId) {
+          throw new Error('Неверный email или пароль');
+        }
+
+        // Получаем данные пользователя из Redis
+        const userData = await redis.get(`user:${userId}`);
+
+        // Если данных нет - выбрасываем ошибку
+        if (!userData) {
+          throw new Error('Неверный email или пароль');
+        }
+
+        // Парсим JSON
+        const user = typeof userData === 'string' ? JSON.parse(userData) : userData;
+
+        // Сравниваем пароль с хешем с помощью bcrypt
+        const passwordMatch = await bcrypt.compare(args.password, user.passwordHash);
+
+        // Если пароль не совпадает - выбрасываем ошибку
+        if (!passwordMatch) {
+          throw new Error('Неверный email или пароль');
+        }
+
+        // Получаем секретный ключ для JWT из переменной окружения
+        const jwtSecret = process.env.JWT_SECRET || 'default-secret-change-in-production';
+
+        // Генерируем JWT токен (срок действия 7 дней)
+        const token = jwt.sign(
+          { userId },
+          jwtSecret,
+          { expiresIn: '7d' }
+        );
+
+        // Возвращаем токен и данные пользователя
+        return {
+          token,
+          user: {
+            id: userId,
+            email: user.email,
+          },
+        };
+      } catch (error) {
+        console.error('Ошибка при входе:', error);
+        throw error;
       }
     }
   },
@@ -683,6 +822,37 @@ const server = new ApolloServer({
   resolvers,
 });
 
+// Функция для создания контекста - извлекает userId из токена
+async function createContext(request: NextRequest) {
+  // Получаем заголовок Authorization из запроса
+  const authHeader = request.headers.get('authorization');
+  
+  let userId: string | null = null;
+  
+  // Если заголовок есть и начинается с "Bearer "
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      // Извлекаем токен (убираем "Bearer " префикс)
+      const token = authHeader.substring(7);
+      
+      // Получаем секретный ключ для JWT из переменной окружения
+      const jwtSecret = process.env.JWT_SECRET || 'default-secret-change-in-production';
+      
+      // Проверяем токен и извлекаем payload
+      const decoded = jwt.verify(token, jwtSecret) as { userId: string };
+      
+      // Сохраняем userId из токена
+      userId = decoded.userId;
+    } catch (error) {
+      // Если токен невалидный - userId остаётся null
+      console.error('Ошибка при проверке токена:', error);
+    }
+  }
+  
+  // Возвращаем контекст с userId (может быть null, если токена нет или он невалиден)
+  return { userId };
+}
+
 // Обработчик для Next.js 16 App Router
 async function handleRequest(request: NextRequest) {
   // Получаем тело запроса
@@ -698,12 +868,15 @@ async function handleRequest(request: NextRequest) {
     });
   }
   
-  // Выполняем GraphQL запрос через Apollo Server
+  // Создаём контекст с userId из токена
+  const context = await createContext(request);
+  
+  // Выполняем GraphQL запрос через Apollo Server с контекстом
   const response = await server.executeOperation({
     query: body.query,
     variables: body.variables,
     operationName: body.operationName,
-  });
+  }, { contextValue: context });
   
   // Проверяем на ошибки
   if (response.body.kind === 'single') {

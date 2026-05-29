@@ -6,7 +6,9 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { FolderOpen, Plus, X } from 'lucide-react';
+import { fetchGraphQL } from '@/lib/api';
 
 // Интерфейс для данных портфеля из GraphQL
 interface Portfolio {
@@ -28,6 +30,8 @@ interface GraphQLResponse {
 }
 
 export default function PortfoliosPage() {
+  const router = useRouter();
+  
   // Состояние для списка портфелей
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   
@@ -36,6 +40,14 @@ export default function PortfoliosPage() {
   
   // Состояние ошибки
   const [error, setError] = useState<string | null>(null);
+  
+  // Проверяем авторизацию при монтировании
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      router.push('/signin');
+    }
+  }, [router]);
   
   // Состояние модального окна создания портфеля
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -66,17 +78,8 @@ export default function PortfoliosPage() {
           }
         `;
         
-        // Выполняем fetch запрос к GraphQL API
-        const response = await fetch('/api/graphql', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ query }),
-        });
-        
-        // Парсим ответ
-        const result: GraphQLResponse = await response.json();
+        // Выполняем GraphQL запрос через хелпер (автоматически добавляет токен)
+        const result: GraphQLResponse = await fetchGraphQL(query);
         
         // Проверяем на ошибки
         if (result.errors) {
@@ -118,17 +121,8 @@ export default function PortfoliosPage() {
         }
       `;
       
-      // Выполняем fetch запрос к GraphQL API
-      const response = await fetch('/api/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: mutation }),
-      });
-      
-      // Парсим ответ
-      const result: GraphQLResponse = await response.json();
+      // Выполняем GraphQL мутацию через хелпер (автоматически добавляет токен)
+      const result: GraphQLResponse = await fetchGraphQL(mutation);
       
       // Проверяем на ошибки
       if (result.errors) {
@@ -149,18 +143,10 @@ export default function PortfoliosPage() {
         }
       `;
       
-      const portfoliosResponse = await fetch('/api/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query }),
-      });
+      const portfoliosResponse = await fetchGraphQL(query);
       
-      const portfoliosResult: GraphQLResponse = await portfoliosResponse.json();
-      
-      if (portfoliosResult.data?.myPortfolios) {
-        setPortfolios(portfoliosResult.data.myPortfolios);
+      if (portfoliosResponse.data?.myPortfolios) {
+        setPortfolios(portfoliosResponse.data.myPortfolios);
       }
       
       // Закрываем модальное окно и очищаем поле ввода

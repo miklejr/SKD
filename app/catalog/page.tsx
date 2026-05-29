@@ -1,6 +1,6 @@
 // app/catalog/page.tsx
 // Страница каталога ETF с поиском, фильтрацией и сортировкой
-// Использует обычный fetch API для GraphQL запросов
+// Использует хелпер fetchGraphQL для GraphQL запросов
 
 'use client';
 
@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Search, X } from 'lucide-react';
 import EtfCard from '@/components/EtfCard';
+import { fetchGraphQL } from '@/lib/api';
 
 // Интерфейс для данных активов (ETF, акции, облигации, валюта)
 interface EtfData {
@@ -95,17 +96,8 @@ export default function CatalogPage() {
           }
         `;
         
-        // Выполняем fetch запрос к GraphQL API
-        const response = await fetch('/api/graphql', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ query }),
-        });
-        
-        // Парсим ответ
-        const result: GraphQLResponse = await response.json();
+        // Выполняем GraphQL запрос через хелпер (автоматически добавляет токен)
+        const result: GraphQLResponse = await fetchGraphQL(query);
         
         // Проверяем на ошибки
         if (result.errors) {
