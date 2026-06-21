@@ -3,7 +3,6 @@
 // Загружает историю с MOEX ISS API с 2020 года и сохраняет в Redis
 
 import { NextRequest, NextResponse } from 'next/server';
-import redis from '@/lib/upstash';
 
 // Интерфейс для исторической котировки
 interface HistoryPoint {
@@ -99,6 +98,9 @@ export async function GET(request: NextRequest) {
       { status: 401 }
     );
   }
+
+  // Динамический импорт Redis - чтобы клиент инициализировался уже с переменными окружения из Vercel
+  const { default: redis } = await import('@/lib/upstash');
   
   console.log('🚀 Начинаем загрузку исторических котировок...');
   

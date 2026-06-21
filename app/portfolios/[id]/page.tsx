@@ -9,7 +9,6 @@ import Link from 'next/link';
 import { ArrowLeft, Plus, Trash2, PieChart } from 'lucide-react';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale, Filler } from 'chart.js';
 import { Pie, Line } from 'react-chartjs-2';
-import { fetchGraphQL } from '@/lib/api';
 
 // Регистрируем необходимые элементы Chart.js
 ChartJS.register(ArcElement, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale, Filler);
@@ -67,14 +66,6 @@ export default function PortfolioDetailPage() {
 
   // Состояние для портфеля
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  
-  // Проверяем авторизацию при монтировании
-  useEffect(() => {
-    const token = localStorage.getItem('authToken');
-    if (!token) {
-      router.push('/signin');
-    }
-  }, [router]);
   
   // Состояние для списка ETF (для выпадающего списка)
   const [etfsList, setEtfsList] = useState<ETF[]>([]);
@@ -134,7 +125,12 @@ export default function PortfolioDetailPage() {
           }
         `;
         
-        const portfoliosResult = await fetchGraphQL(portfoliosQuery);
+        const portfoliosResponse = await fetch('/api/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: portfoliosQuery }),
+        });
+        const portfoliosResult = await portfoliosResponse.json();
         
         if (portfoliosResult.errors) {
           throw new Error(portfoliosResult.errors[0].message);
@@ -160,7 +156,12 @@ export default function PortfolioDetailPage() {
           }
         `;
         
-        const etfsResult = await fetchGraphQL(etfsQuery);
+        const etfsResponse = await fetch('/api/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: etfsQuery }),
+        });
+        const etfsResult = await etfsResponse.json();
         
         if (etfsResult.data?.etfs) {
           setEtfsList(etfsResult.data.etfs);
@@ -197,7 +198,12 @@ export default function PortfolioDetailPage() {
         }
       `;
       
-      const result = await fetchGraphQL(mutation);
+      const response = await fetch('/api/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: mutation }),
+      });
+      const result = await response.json();
       
       if (result.errors) {
         throw new Error(result.errors[0].message);
@@ -240,7 +246,12 @@ export default function PortfolioDetailPage() {
         }
       `;
       
-      const result = await fetchGraphQL(mutation);
+      const response = await fetch('/api/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: mutation }),
+      });
+      const result = await response.json();
       
       if (result.errors) {
         throw new Error(result.errors[0].message);
@@ -284,7 +295,12 @@ export default function PortfolioDetailPage() {
         }
       `;
       
-      const result = await fetchGraphQL(query);
+      const response = await fetch('/api/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const result = await response.json();
       
       if (result.data?.myPortfolios) {
         const foundPortfolio = result.data.myPortfolios.find((p: Portfolio) => p.id === id);
@@ -319,7 +335,12 @@ export default function PortfolioDetailPage() {
         }
       `;
       
-      const result = await fetchGraphQL(query);
+      const response = await fetch('/api/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const result = await response.json();
       
       if (result.errors) {
         throw new Error(result.errors[0].message);

@@ -1,22 +1,25 @@
 // app/api/cron/update-quotes/route.ts
 // API-роут для обновления котировок через Cron Job на Vercel
 // Вызывается каждые 6 часов для обновления цен всех активов
+// Защищён секретным ключом CRON_SECRET в заголовке Authorization: Bearer <CRON_SECRET>
 
 import { NextRequest, NextResponse } from 'next/server';
-import redis from '@/lib/upstash';
 
-// Интерфейс для котировки
+// Интерфейс для котировки, которая сохраняется в Redis
+// Важно: GraphQL ожидает поля price, change, changePercent
 interface QuoteData {
   price: number;
   change: number;
   changePercent: number;
-  timestamp: string;
 }
 
 // Интерфейс для ответа MOEX ISS API (текущие котировки)
-interface MoexQuoteResponse {
-  marketdata: {
-    data: Array<[number, number, number, number, number, number]>; // [SECID, LAST, CHANGE, LASTTOPREV, VOLUME, VALUE]
+interface MoexResponse {
+  marketdata?: {
+    data?: (number | string)[][];
+  };
+  securities?: {
+    data?: (number | string)[][];
   };
 }
 
@@ -30,109 +33,149 @@ interface CbrResponse {
   };
 }
 
-// Функция для получения текущей котировки из MOEX ISS API
-async function fetchMoexQuote(ticker: string): Promise<QuoteData | null> {
-  try {
-    // Формируем URL для запроса текущих котировок
-    // marketdata.columns=LAST,CHANGE,LASTTOPREV - запрашиваем цену, изменение и изменение в %
-    const url = `https://iss.moex.com/iss/engines/stock/markets/shares/securities/${ticker}.json?marketdata.columns=LAST,CHANGE,LASTTOPREV`;
-    
-    // Выполняем HTTP GET запрос
-    const response = await fetch(url);
-    
-    // Проверяем, что запрос успешен
-    if (!response.ok) {
-      console.error(`[${ticker}] ❌ Ошибка HTTP: ${response.status}`);
-      return null;
-    }
-    
-    // Парсим JSON ответ
-    const data: MoexQuoteResponse = await response.json();
-    
-    // Проверяем, есть ли данные в marketdata.data
-    if (!data.marketdata?.data || data.marketdata.data.length === 0) {
-      console.error(`[${ticker}] ❌ Нет данных о котировках`);
-      return null;
-    }
-    
-    // marketdata.data - это [[secid, last, change, lasttoprev, volume, value], ...]
-    // Нам нужны: last (цена), change (абсолютное изменение), lasttoprev (изменение в %)
-    const quoteRow = data.marketdata.data[0];
-    const last = quoteRow[1]; // LAST - текущая цена
-    const change = quoteRow[2]; // CHANGE - абсолютное изменение
-    const changePercent = quoteRow[3]; // LASTTOPREV - изменение в процентах
-    
-    // Если цена равна 0 или null - возвращаем null
-    if (!last || last === 0) {
-      console.error(`[${ticker}] ❌ Некорректная цена: ${last}`);
-      return null;
-    }
-    
-    const quote: QuoteData = {
-      price: last,
-      change: change || 0,
-      changePercent: changePercent || 0,
-      timestamp: new Date().toISOString(),
-    };
-    
-    console.log(`[${ticker}] ✅ Цена: ${last}, Изменение: ${changePercent}%`);
-    return quote;
-    
-  } catch (error) {
-    console.error(`[${ticker}] ❌ Ошибка: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+// Список тикеров для обновления котировок
+// Скопирован из массива etfsData в app/api/graphql/route.ts
+// Включает ETF, акции, облигации, золото и валюты
+const TICKERS = [
+  // ETF - Индексы широкого рынка
+  'TMOS', 'SBMX', 'EQMX',
+  // ETF - Дивидендные акции
+  'DIVD',
+  // ETF - Финансы
+  'SFIN',
+  // ETF - Технологии
+  'AKHT',
+  // ETF - Активное управление
+  'ESGR', 'AKME', 'SBSC',
+  // ETF - Облигации
+  'SBGB', 'SBRB', 'INFL', 'SBCB',
+  // ETF - Золото
+  'GLD',
+  // Акции (blue chips)
+  'SBER', 'GAZP', 'LKOH', 'NVTK', 'GMKN', 'TATN', 'ROSN', 'YDEX',
+  // Облигации (ОФЗ)
+  'SU26240RMFS2', 'SU26238RMFS4', 'SU26230RMFS1',
+  // Валюта
+  'USD/RUB', 'EUR/RUB', 'CNY/RUB',
+];
+
+// Определяем подходящие boards (торговые режимы) для каждого типа актива
+// Разные активы торгуются на разных boards на Московской бирже
+function getBoardsForTicker(ticker: string): string[] {
+  // ETF и золото
+  const etfTickers = ['TMOS', 'SBMX', 'EQMX', 'DIVD', 'SFIN', 'AKHT', 'ESGR', 'AKME', 'SBSC', 'SBGB', 'SBRB', 'INFL', 'SBCB', 'GLD'];
+  // Акции
+  const stockTickers = ['SBER', 'GAZP', 'LKOH', 'NVTK', 'GMKN', 'TATN', 'ROSN', 'YDEX'];
+  // ОФЗ
+  const bondTickers = ['SU26240RMFS2', 'SU26238RMFS4', 'SU26230RMFS1'];
+
+  if (etfTickers.includes(ticker)) {
+    return ['TQTF', 'TQBR', 'TQTD', 'TQIF'];
+  } else if (stockTickers.includes(ticker)) {
+    return ['TQBR'];
+  } else if (bondTickers.includes(ticker)) {
+    return ['TQOB'];
   }
+
+  // По умолчанию пробуем все основные boards
+  return ['TQTF', 'TQBR', 'TQTD', 'TQIF'];
 }
 
-// Функция для получения курса валют из ЦБ РФ
+// Получаем текущую котировку одного тикера из MOEX ISS API
+// Пробуем несколько boards, пока не найдём данные
+async function fetchMoexQuote(ticker: string): Promise<QuoteData | null> {
+  const boards = getBoardsForTicker(ticker);
+
+  for (const board of boards) {
+    try {
+      // Формируем URL для запроса к MOEX ISS API
+      const url = `https://iss.moex.com/iss/engines/stock/markets/shares/boards/${board}/securities/${ticker}.json`;
+
+      // Выполняем HTTP GET запрос
+      const response = await fetch(url);
+
+      // Если запрос не успешен - пробуем следующий board
+      if (!response.ok) {
+        continue;
+      }
+
+      // Парсим JSON ответ
+      const data: MoexResponse = await response.json();
+
+      // Сначала смотрим в marketdata (текущие торги)
+      if (data.marketdata?.data && data.marketdata.data.length > 0) {
+        const marketdataRow = data.marketdata.data[0];
+
+        // Индексы полей в marketdata.data:
+        // 12 - цена (LAST или текущая цена)
+        // 13 - изменение в валюте (CHANGE)
+        // 14 - изменение в процентах (CHANGE в %)
+        const price = marketdataRow[12] as number || 0;
+        const change = marketdataRow[13] as number || 0;
+        const changePercent = marketdataRow[14] as number || 0;
+
+        if (price > 0) {
+          return { price, change, changePercent };
+        }
+      }
+
+      // Если marketdata пуст, пробуем взять цену из securities
+      if (data.securities?.data && data.securities.data.length > 0) {
+        const securitiesRow = data.securities.data[0];
+        const lastPrice = securitiesRow[5] as number || securitiesRow[1] as number || 0;
+
+        if (lastPrice > 0) {
+          return { price: lastPrice, change: 0, changePercent: 0 };
+        }
+      }
+    } catch (error) {
+      // Продолжаем пробовать следующий board при ошибке
+      continue;
+    }
+  }
+
+  // Нигде не нашли данных
+  return null;
+}
+
+// Получаем курс валюты из API ЦБ РФ
 async function fetchCbrRate(currency: string): Promise<QuoteData | null> {
   try {
-    // Формируем URL для запроса курсов ЦБ РФ
     const url = 'https://www.cbr-xml-daily.ru/daily_json.js';
-    
-    // Выполняем HTTP GET запрос
     const response = await fetch(url);
-    
-    // Проверяем, что запрос успешен
+
     if (!response.ok) {
       console.error(`[${currency}] ❌ Ошибка HTTP ЦБ РФ: ${response.status}`);
       return null;
     }
-    
-    // Парсим JSON ответ
+
     const data: CbrResponse = await response.json();
-    
-    // Маппинг тикеров на коды ЦБ РФ
+
+    // Маппинг тикеров на коды валют ЦБ РФ
     const tickerMap: Record<string, string> = {
       'USD/RUB': 'USD',
       'EUR/RUB': 'EUR',
       'CNY/RUB': 'CNY',
     };
-    
+
     const cbrCode = tickerMap[currency];
     if (!cbrCode || !data.Valute[cbrCode]) {
       console.error(`[${currency}] ❌ Валюта не найдена в ответе ЦБ РФ`);
       return null;
     }
-    
+
     const valute = data.Valute[cbrCode];
     const currentRate = parseFloat(valute.Value.replace(',', '.'));
     const previousRate = parseFloat(valute.Previous.replace(',', '.'));
-    
-    // Вычисляем изменение
+
     const change = currentRate - previousRate;
     const changePercent = (change / previousRate) * 100;
-    
-    const quote: QuoteData = {
+
+    return {
       price: currentRate,
-      change: change,
-      changePercent: changePercent,
-      timestamp: new Date().toISOString(),
+      change,
+      changePercent,
     };
-    
-    console.log(`[${currency}] ✅ Курс: ${currentRate}, Изменение: ${changePercent.toFixed(2)}%`);
-    return quote;
-    
   } catch (error) {
     console.error(`[${currency}] ❌ Ошибка: ${error instanceof Error ? error.message : String(error)}`);
     return null;
@@ -144,42 +187,32 @@ export async function GET(request: NextRequest) {
   // Проверяем авторизацию через CRON_SECRET
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.substring(7) !== cronSecret) {
+
+  if (!cronSecret || !authHeader || !authHeader.startsWith('Bearer ') || authHeader.substring(7) !== cronSecret) {
     return NextResponse.json(
       { error: 'Unauthorized' },
       { status: 401 }
     );
   }
-  
+
+  // Динамический импорт Redis - чтобы клиент инициализировался уже с переменными окружения из Vercel
+  const { default: redis } = await import('@/lib/upstash');
+
   console.log('🚀 Начинаем обновление котировок...');
-  
-  // Список тикеров для обновления (из etfsData)
-  const tickers = [
-    // ETF
-    'TMOS', 'SBMX', 'EQMX', 'DIVD', 'SFIN', 'AKHT', 'ESGR', 'AKME', 'SBSC',
-    'SBGB', 'SBRB', 'INFL', 'SBCB', 'GLD',
-    // Акции
-    'SBER', 'GAZP', 'LKOH', 'NVTK', 'GMKN', 'TATN', 'ROSN', 'YDEX',
-    // Облигации
-    'SU26240RMFS2', 'SU26238RMFS4', 'SU26230RMFS1',
-    // Валюта
-    'USD/RUB', 'EUR/RUB', 'CNY/RUB',
-  ];
-  
+
   let updatedCount = 0;
-  
+
   // Обновляем котировки для каждого тикера
-  for (const ticker of tickers) {
+  for (const ticker of TICKERS) {
     let quote: QuoteData | null = null;
-    
+
     // Для валют используем ЦБ РФ, для остальных - MOEX ISS
     if (ticker.includes('/')) {
       quote = await fetchCbrRate(ticker);
     } else {
       quote = await fetchMoexQuote(ticker);
     }
-    
+
     // Если данные получены - сохраняем в Redis
     if (quote) {
       try {
@@ -191,16 +224,16 @@ export async function GET(request: NextRequest) {
         console.error(`[${ticker}] ❌ Ошибка сохранения в Redis: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    
+
     // Делаем паузу 50 мс между запросами, чтобы не перегрузить API
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  
-  console.log(`✅ Обновление котировок завершено. Обновлено: ${updatedCount}/${tickers.length}`);
-  
+
+  console.log(`✅ Обновление котировок завершено. Обновлено: ${updatedCount}/${TICKERS.length}`);
+
   return NextResponse.json({
     success: true,
     updated: updatedCount,
-    total: tickers.length,
+    total: TICKERS.length,
   });
 }

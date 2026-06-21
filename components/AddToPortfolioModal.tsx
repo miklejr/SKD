@@ -3,7 +3,6 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { fetchGraphQL } from '@/lib/api';
 
 // Интерфейс для портфеля
 interface Portfolio {
@@ -65,8 +64,13 @@ export default function AddToPortfolioModal({ etfId, etfSymbol, isOpen, onClose 
           }
         `;
         
-        // Выполняем GraphQL запрос через хелпер (автоматически добавляет токен)
-        const result: GraphQLResponse = await fetchGraphQL(query);
+        // Выполняем GraphQL запрос через обычный fetch (без токена)
+        const response = await fetch('/api/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+        });
+        const result: GraphQLResponse = await response.json();
         
         // Проверяем на ошибки
         if (result.errors) {
@@ -121,8 +125,13 @@ export default function AddToPortfolioModal({ etfId, etfSymbol, isOpen, onClose 
         }
       `;
       
-      // Выполняем GraphQL мутацию через хелпер (автоматически добавляет токен)
-      const result: GraphQLResponse = await fetchGraphQL(mutation);
+      // Выполняем GraphQL мутацию через обычный fetch (без токена)
+      const response = await fetch('/api/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: mutation }),
+      });
+      const result: GraphQLResponse = await response.json();
       
       // Проверяем на ошибки
       if (result.errors) {

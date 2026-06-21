@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Search, PieChart, TrendingUp, Database, Shield, ArrowRight } from 'lucide-react';
 import EtfCard from '@/components/EtfCard';
-import { fetchGraphQL } from '@/lib/api';
 
 // Интерфейс для данных активов (ETF, акции, облигации, валюта)
 interface EtfData {
@@ -65,8 +64,13 @@ export default function Home() {
           }
         `;
         
-        // Выполняем GraphQL запрос через хелпер (автоматически добавляет токен)
-        const result: GraphQLResponse = await fetchGraphQL(query);
+        // Выполняем GraphQL запрос через обычный fetch (без токена)
+        const response = await fetch('/api/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+        });
+        const result: GraphQLResponse = await response.json();
         
         // Проверяем на ошибки
         if (result.errors) {
